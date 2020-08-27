@@ -205,6 +205,7 @@ public class QuartzScheduler implements RemotableQuartzScheduler {
      * 
      * @see QuartzSchedulerResources
      */
+    // 入口start
     public QuartzScheduler(QuartzSchedulerResources resources, long idleWaitTime, @Deprecated long dbRetryInterval)
         throws SchedulerException {
         this.resources = resources;

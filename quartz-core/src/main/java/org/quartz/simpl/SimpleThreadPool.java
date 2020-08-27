@@ -233,6 +233,7 @@ public class SimpleThreadPool implements ThreadPool {
         schedulerInstanceName = schedName;
     }
 
+    // 工作线程池的初始化方法很容易理解，就是循环创建了多个工作线程并启动他们
     public void initialize() throws SchedulerConfigException {
 
         if(workers != null && workers.size() > 0) // already initialized...
@@ -274,7 +275,9 @@ public class SimpleThreadPool implements ThreadPool {
         Iterator<WorkerThread> workerThreads = createWorkerThreads(count).iterator();
         while(workerThreads.hasNext()) {
             WorkerThread wt = workerThreads.next();
+            // 直接启动线程
             wt.start();
+            // 添加到线程池的可用线程列表中
             availWorkers.add(wt);
         }
     }
@@ -417,6 +420,7 @@ public class SimpleThreadPool implements ThreadPool {
             handoffPending = true;
 
             // Wait until a worker thread is available
+            // 如果当前没有空闲工作线程，就循环等待500毫秒，知道有可用的线程
             while ((availWorkers.size() < 1) && !isShutdown) {
                 try {
                     nextRunnableLock.wait(500);
@@ -425,16 +429,22 @@ public class SimpleThreadPool implements ThreadPool {
             }
 
             if (!isShutdown) {
+                // 这里是正常运行任务的流程，同时把线程从空闲线程队列移动到工作线程队列
                 WorkerThread wt = (WorkerThread)availWorkers.removeFirst();
                 busyWorkers.add(wt);
+                // 执行任务
+                // >>>>>>>>>
                 wt.run(runnable);
             } else {
                 // If the thread pool is going down, execute the Runnable
                 // within a new additional worker thread (no thread from the pool).
+                // 这里是一种补救机制，如果线程池已经关闭，但是此时任务已经被提交
+                // 就单独开一个线程来执行任务（此时其他工作线程可能 正在/已经 销毁）
                 WorkerThread wt = new WorkerThread(this, threadGroup,
                         "WorkerThread-LastJob", prio, isMakeThreadsDaemons(), runnable);
                 busyWorkers.add(wt);
                 workers.add(wt);
+                // >>>>>>>>>
                 wt.start();
             }
             nextRunnableLock.notifyAll();
@@ -548,6 +558,7 @@ public class SimpleThreadPool implements ThreadPool {
                 }
 
                 runnable = newRunnable;
+                // 主动唤醒处于等待状态的线程
                 lock.notifyAll();
             }
         }
@@ -557,6 +568,7 @@ public class SimpleThreadPool implements ThreadPool {
          * Loop, executing targets as they are received.
          * </p>
          */
+        // 循环，执行接收到的任务
         @Override
         public void run() {
             boolean ran = false;
@@ -564,12 +576,15 @@ public class SimpleThreadPool implements ThreadPool {
             while (run.get()) {
                 try {
                     synchronized(lock) {
+                        // 如果没有任务需要执行，就进入等待状态
+                        // 这样做的原因是减少空循环带来的cpu资源销毁
                         while (runnable == null && run.get()) {
                             lock.wait(500);
                         }
 
                         if (runnable != null) {
                             ran = true;
+                            // 执行提交的任务
                             runnable.run();
                         }
                     }
@@ -596,11 +611,14 @@ public class SimpleThreadPool implements ThreadPool {
                         setPriority(tp.getThreadPriority());
                     }
 
+                    // 这里是我上面说的补救情况，就是线程池处于关闭情况，此时一个任务被提交进来
+                    // 就单独启动一个线程完成提交的任务，执行完成以后线程销毁
                     if (runOnce) {
                            run.set(false);
                         clearFromBusyWorkersList(this);
                     } else if(ran) {
                         ran = false;
+                        // 从工作队列中重新放入空闲队列
                         makeAvailable(this);
                     }
 

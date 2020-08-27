@@ -275,15 +275,20 @@ public class QuartzSchedulerThread extends Thread {
                     }
                 }
 
+                // 获得可用的worker线程数量
                 int availThreadCount = qsRsrcs.getThreadPool().blockForAvailableThreads();
+                // 可用的worker线程数量大于0时，才提交任务
                 if(availThreadCount > 0) { // will always be true, due to semantics of blockForAvailableThreads...
 
                     List<OperableTrigger> triggers;
 
+                    // 当前系统时间
                     long now = System.currentTimeMillis();
 
                     clearSignaledSchedulingChange();
                     try {
+                        // 这里是核心代码，acquireNextTriggers()方法会返回将要触发的Trigger
+                        // 这里根据一个将来短暂的时间段来判断，返回在这个时间段内会触发的Trigger列表
                         triggers = qsRsrcs.getJobStore().acquireNextTriggers(
                                 now + idleWaitTime, Math.min(availThreadCount, qsRsrcs.getMaxBatchSize()), qsRsrcs.getBatchTimeWindow());
                         acquiresFailed = 0;
@@ -311,13 +316,19 @@ public class QuartzSchedulerThread extends Thread {
                     if (triggers != null && !triggers.isEmpty()) {
 
                         now = System.currentTimeMillis();
+                        // 获取最近要触发的任务的触发时间
                         long triggerTime = triggers.get(0).getNextFireTime().getTime();
+                        // 获取触发倒计时
                         long timeUntilTrigger = triggerTime - now;
+                        // 这里判断依据是2毫秒，其实是因为线程休眠唤醒也是需要一定时间的
+                        // 因此如果触发倒计时小于2毫秒 ，就认为这时已经可以触发任务了
                         while(timeUntilTrigger > 2) {
                             synchronized (sigLock) {
                                 if (halted.get()) {
                                     break;
                                 }
+                                // 这里是判断是否需值得休眠，因为有可能存在Scheduler被暂停（paused）
+                                // 被终止（halt）的情况，这时候就没必要休眠了
                                 if (!isCandidateNewTimeEarlierWithinReason(triggerTime, false)) {
                                     try {
                                         // we could have blocked a long while
@@ -325,6 +336,8 @@ public class QuartzSchedulerThread extends Thread {
                                         now = System.currentTimeMillis();
                                         timeUntilTrigger = triggerTime - now;
                                         if(timeUntilTrigger >= 1)
+                                            // 这里是让当前线程等待，等待时间就是触发倒计时
+                                            // 让线程等待的原因是防止持续while循环导致cpu占用过高
                                             sigLock.wait(timeUntilTrigger);
                                     } catch (InterruptedException ignore) {
                                     }
@@ -346,10 +359,13 @@ public class QuartzSchedulerThread extends Thread {
 
                         boolean goAhead = true;
                         synchronized(sigLock) {
+                            // 再次判断任务是否已经取消
                             goAhead = !halted.get();
                         }
                         if(goAhead) {
                             try {
+                                // 这里获得的TriggerFiredResult是一个包装过的JobDetail和Trigger对象
+                                // 也就是找到了Trigger关联的Job
                                 List<TriggerFiredResult> res = qsRsrcs.getJobStore().triggersFired(triggers);
                                 if(res != null)
                                     bndles = res;
@@ -360,6 +376,7 @@ public class QuartzSchedulerThread extends Thread {
                                 //QTZ-179 : a problem occurred interacting with the triggers from the db
                                 //we release them and loop again
                                 for (int i = 0; i < triggers.size(); i++) {
+                                    // 出现异常，就释放这些准备执行的Trigger，重新放回等待列表
                                     qsRsrcs.getJobStore().releaseAcquiredTrigger(triggers.get(i));
                                 }
                                 continue;
@@ -367,6 +384,10 @@ public class QuartzSchedulerThread extends Thread {
 
                         }
 
+                        // 现在我们已经拿到了当前时间点需要触发的Trigger以及其关联的JobDetail，
+                        // 下一步就是把Job提交给Quartz的WorkerThreadPool（工作线程池），
+                        // 肯定不能在Scheduler的线程里去执行任务，因为Scheduler线程只是作为一个时间调度线程，需要保证实时性而且不能被阻塞，
+                        // 因此任务工作线程就必然是额外的线程
                         for (int i = 0; i < bndles.size(); i++) {
                             TriggerFiredResult result =  bndles.get(i);
                             TriggerFiredBundle bndle =  result.getTriggerFiredBundle();
@@ -388,6 +409,7 @@ public class QuartzSchedulerThread extends Thread {
 
                             JobRunShell shell = null;
                             try {
+                                // 这里就是包装Job成为一个shell
                                 shell = qsRsrcs.getJobRunShellFactory().createJobRunShell(bndle);
                                 shell.initialize(qs);
                             } catch (SchedulerException se) {
@@ -395,6 +417,11 @@ public class QuartzSchedulerThread extends Thread {
                                 continue;
                             }
 
+                            // 核心代码：提交job到Worker线程池执行任务
+                            // Quartz框架默认实现了一个简单线程池SimpleThreadPool类，
+                            // 也就是说Worker线程池是Quartz框架实现的，
+                            // 而不是直接使用的Java线程池（因为要满足任务执行的时效性，Java线程池设计上有一种异步的理念，不太适合Quartz使用）
+                            // >>>>>>>>>
                             if (qsRsrcs.getThreadPool().runInThread(shell) == false) {
                                 // this case should never happen, as it is indicative of the
                                 // scheduler being shutdown or a bug in the thread pool or
