@@ -145,8 +145,10 @@ public class QuartzScheduler implements RemotableQuartzScheduler {
      * ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
      */
 
+    // Scheduler需要的资源类，包括工作线程池和JobStore存储Job和Trigger映射关系
     private QuartzSchedulerResources resources;
 
+    // Shceduler调度线程，这个线程负责根据Trigger的出发时间触发Job执行
     private QuartzSchedulerThread schedThread;
 
     private ThreadGroup threadGroup;
@@ -215,6 +217,7 @@ public class QuartzScheduler implements RemotableQuartzScheduler {
 
         this.schedThread = new QuartzSchedulerThread(this, resources);
         ThreadExecutor schedThreadExecutor = resources.getThreadExecutor();
+        // >>>>>>>>>
         schedThreadExecutor.execute(this.schedThread);
         if (idleWaitTime > 0) {
             this.schedThread.setIdleWaitTime(idleWaitTime);

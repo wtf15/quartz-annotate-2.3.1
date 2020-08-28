@@ -420,7 +420,7 @@ public class SimpleThreadPool implements ThreadPool {
             handoffPending = true;
 
             // Wait until a worker thread is available
-            // 如果当前没有空闲工作线程，就循环等待500毫秒，知道有可用的线程
+            // 如果当前没有空闲工作线程，就循环等待500毫秒，直到有可用的线程
             while ((availWorkers.size() < 1) && !isShutdown) {
                 try {
                     nextRunnableLock.wait(500);
